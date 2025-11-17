@@ -1,0 +1,76 @@
+#!/bin/bash
+
+# Sep, 09, 2025, raj
+
+# Directories and resources
+FASTQ_DIR="path//FASTQ_files"
+TRIMMED_DIR="path//salmon_quant_all/trimmed_fastqs"
+CUTADAPT_BIN="path//bin/cutadapt"
+FASTQ_MCF_BIN="path//ea-utils-1.05/clipper/fastq-mcf"
+ADAPTER_FA="path//Adapter_seq.fa"
+SALMON_INDEX="path//prebuilt_salmon_index/salmon_partial_sa_index"
+QUANT_OUTDIR="path//salmon_quant_all"
+
+THREADS=4
+
+# Make output directories if not exists
+mkdir -p "$QUANT_OUTDIR"
+mkdir -p "$TRIMMED_DIR"
+
+# Looping through DASTQs
+for R1 in "$FASTQ_DIR"/*_R1.fastq.gz; do
+    SAMPLE=$(basename "$R1" _R1.fastq.gz)
+    R2="$FASTQ_DIR/${SAMPLE}_R2.fastq.gz"
+    echo "============================================================="
+    echo "START: Adapter trimming for ${SAMPLE}"
+    
+    # Step 1: cutadapt trimming
+    $CUTADAPT_BIN -j 10 \
+      -g AATGATACGGCGACCACCGAGATCTACACTCTTTCCCTACACGACGCTCTTCCGATCT \
+      -G AATGATACGGCGACCACCGAGATCTACACTCTTTCCCTACACGACGCTCTTCCGATCT \
+      -a AGATCGGAAGAGCGTCGTGT -A AGATCGGAAGAGCGTCGTGT \
+      -a AGATCGGAAGAGCACACGTC -A AGATCGGAAGAGCACACGTC \
+      -a ATCTCGTATGCCGTCTTCTGCTTG -A ATCTCGTATGCCGTCTTCTGCTTG \
+      -n 8 \
+      -o "$TRIMMED_DIR/${SAMPLE}_R1_4.fastq.gz" \
+      -p "$TRIMMED_DIR/${SAMPLE}_R2_4.fastq.gz" \
+      --minimum-length 30 \
+      "$R1" "$R2" \
+      || echo "Cutadapt failed for ${SAMPLE}"
+    echo "Adapter trimming (cutadapt) done for ${SAMPLE}"
+
+    # Step 2: fastq-mcf trimming
+    $FASTQ_MCF_BIN -x 10 -q 20 -l 30 -S -k 0 \
+      -o "$TRIMMED_DIR/${SAMPLE}_R1.AT.fastq" \
+      -o "$TRIMMED_DIR/${SAMPLE}_R2.AT.fastq" \
+      "$ADAPTER_FA" \
+      "$TRIMMED_DIR/${SAMPLE}_R1_4.fastq.gz" \
+      "$TRIMMED_DIR/${SAMPLE}_R2_4.fastq.gz" \
+      || echo "fastq-mcf failed for ${SAMPLE}"
+    echo "Adapter trimming (fastq-mcf) done for ${SAMPLE}"
+    
+    # Step 3: Deleting intermediate files to keep only final trimmed fastqs
+    echo "Deleting intermediate files for ${SAMPLE}"
+    rm -f "$TRIMMED_DIR/${SAMPLE}_R1_4.fastq.gz" "$TRIMMED_DIR/${SAMPLE}_R2_4.fastq.gz"
+    echo "DONE: Deleting intermediate files for ${SAMPLE}"
+
+    # Step 4: Salmon quantification
+    echo "START: Salmon quantification for ${SAMPLE}"
+    docker run --rm -u 8906:2222 \
+      -v "$SALMON_INDEX":/salmon_index \
+      -v "$TRIMMED_DIR":/fastqs \
+      -v "$QUANT_OUTDIR":/output \
+      combinelab/salmon salmon quant \
+      -i /salmon_index \
+      -l A \
+      -1 /fastqs/${SAMPLE}_R1.AT.fastq \
+      -2 /fastqs/${SAMPLE}_R2.AT.fastq \
+      -o /output/${SAMPLE}_quant_output \
+      -p $THREADS \
+      || echo "Salmon quant failed for ${SAMPLE}"
+
+    echo "DONE: ${SAMPLE} quantification and saved at ${QUANT_OUTDIR}"
+    echo "============================================================="
+done
+
+echo "Pipeline Finished"
