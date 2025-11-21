@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Sep, 09, 2025, raj
-# For paired end 
+# For illumina paired end 
 # requirements: cutadapt, fastq-mcf, Adapter_seq.fa,salmon index
-# for salmon docker is used
+# for salmon, docker is used
 
 # Directories and resources
 FASTQ_DIR="path//FASTQ_files"
